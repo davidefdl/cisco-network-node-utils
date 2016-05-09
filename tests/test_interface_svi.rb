@@ -51,6 +51,7 @@ class TestSvi < CiscoTestCase
 
   def teardown
     remove_all_svis
+    config_no_warn('no feature private-vlan')
     super
   end
 
@@ -70,13 +71,10 @@ class TestSvi < CiscoTestCase
     if validate_property_excluded?('interface',
                                    'private_vlan_mapping')
       assert_nil(svi.private_vlan_mapping)
-      assert_raises(Cisco::UnsupportedError) do
-        svi.private_vlan_mapping = 10
-      end
       return
     end
     input = %w(10-20 30)
-    result = %w(10-20 30)
+    result = ['10-20,30']
     svi.private_vlan_mapping = input
     assert_equal(result,
                  svi.private_vlan_mapping,
@@ -101,13 +99,10 @@ class TestSvi < CiscoTestCase
     if validate_property_excluded?('interface',
                                    'private_vlan_mapping')
       assert_nil(svi.private_vlan_mapping)
-      assert_raises(Cisco::UnsupportedError) do
-        svi.private_vlan_mapping = 10
-      end
       return
     end
     input = %w(10 20)
-    result = %w(10 20)
+    result = ['10,20']
     svi.private_vlan_mapping = input
     input = svi.private_vlan_mapping
     assert_equal(result,

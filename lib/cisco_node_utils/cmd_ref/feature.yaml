@@ -33,13 +33,14 @@ itd:
   set_value: "feature itd"
 
 nv_overlay:
-  _exclude: [N3k, N5k, N6k]
+  # N3k - native vxlan support in a future release
+  _exclude: [N3k]
   kind: boolean
   get_value: '/^feature nv overlay$/'
-  set_value: "feature nv overlay"
+  set_value: "<state> feature nv overlay"
 
 nv_overlay_evpn:
-  # TBD: Exclude all n3k even though N31xx in 'switchmode n9k' supports evpn
+  # N3k - native vxlan support in a future release
   _exclude: [N3k]
   kind: boolean
   get_command: "show running | section nv"
@@ -59,20 +60,20 @@ pim:
 private_vlan:
   _exclude: [N8k]
   kind: boolean
-  get_command: "show running | i ^feature"
   get_value: '/^feature private-vlan$/'
   set_value: "feature private-vlan"
 
+tacacs:
+  kind: boolean
+  get_value: '/^feature tacacs\+$/'
+  set_value: "feature tacacs"
+
 vn_segment_vlan_based:
-  # MT-lite only
-  N3k: &vn_segment_vlan_based_mt_lite
-    # Note: Some N3k are not hardware-capable
-    kind: boolean
-    get_value: '/^feature vn-segment-vlan-based$/'
-    set_value: 'feature vn-segment-vlan-based'
-    default_value: false
-  N8k: *vn_segment_vlan_based_mt_lite
-  N9k: *vn_segment_vlan_based_mt_lite
+  _exclude: [N7k]
+  kind: boolean
+  get_value: '/^feature vn-segment-vlan-based$/'
+  set_value: 'feature vn-segment-vlan-based'
+  default_value: false
 
 vni:
   kind: boolean
@@ -80,13 +81,9 @@ vni:
     # MT-Full only
     get_value: '/^feature vni$/'
     set_value: 'feature vni'
-  N3k: &feature_mt_lite
-    # MT-lite only
-    # Note: Some N3k are not hardware-capable
+  else:
     get_value: '/^feature vn-segment-vlan-based$/'
     set_value: 'feature vn-segment-vlan-based'
-  N8k: *feature_mt_lite
-  N9k: *feature_mt_lite
 
 vtp:
   kind: boolean

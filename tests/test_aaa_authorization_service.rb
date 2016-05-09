@@ -22,6 +22,7 @@ class TestAaaAuthorizationService < CiscoTestCase
 
   def setup
     super
+
     cleanup_aaa if @@pre_clean_needed
     @@pre_clean_needed = false # rubocop:disable Style/ClassVars
     feature_tacacs

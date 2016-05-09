@@ -95,8 +95,40 @@ module Cisco
       true
     end
 
+    # 'capabilities' is a getter-only helper for minitest and beaker.
+    # mode values:
+    #   :hash = Transform the output into a hash
+    #   :raw  = The raw output from 'show int capabilities'. Some multi-line
+    #           values do not translate easily so this option allows the
+    #           caller to extract the data it needs.
+    #
+    # Sample cli output:
+    #    Model:                 N7K-M132XP-12L
+    #    Type (SFP capable):    10Gbase-SR
+    #    Speed:                 10,100,1000
+    #
+    # Sample hash output:
+    # {"Model"=>"N7K-M132XP-12L", "Type"=>"10Gbase-SR", "Speed"=>"10,100,1000"}
+    #
+    def self.capabilities(intf, mode=:hash)
+      array = config_get('interface', 'capabilities', name: intf)
+      return array if mode == :raw
+      hash = {}
+      if array
+        array.delete('')
+        array.each do |line|
+          k, v = line.split(':')
+          next if k.nil? || v.nil?
+          k.gsub!(/ \(.*\)/, '') # Remove any parenthetical text from key
+          v.strip!
+          hash[k] = v
+        end
+      end
+      hash
+    end
+
     def create
-      feature_vlan_set(true) if @name[/vlan/i]
+      feature_vlan_set(true) if @name[/(vlan|bdi)/i]
       config_set('interface', 'create', name: @name)
     rescue Cisco::CliError
       # Some XR platforms do not support channel-group configuration
@@ -498,9 +530,7 @@ module Cisco
     end
 
     def speed
-      val = config_get('interface', 'speed', name: @name)
-      return val if val.nil?
-      val == 'auto' ? val : val.to_i
+      config_get('interface', 'speed', name: @name)
     end
 
     def speed=(val)
@@ -969,15 +999,16 @@ module Cisco
       mode = config_get('interface',
                         'switchport_mode_private_vlan_host',
                         name: @name)
-
-      return mode.nil? ? :disabled : IF_SWITCHPORT_MODE.key(mode)
-
+      unless mode == default_switchport_mode_private_vlan_host
+        mode = IF_SWITCHPORT_MODE.key(mode)
+      end
+      mode
     rescue IndexError
       # Assume this is an interface that doesn't support switchport.
       # Do not raise exception since the providers will prefetch this property
       # regardless of interface type.
       # TODO: this should probably be nil instead
-      return :disabled
+      return default_switchport_mode_private_vlan_host
     end
 
     def switchport_mode_private_vlan_host=(mode_set)
@@ -986,12 +1017,20 @@ module Cisco
       switchport_enable_and_mode_private_vlan_host(mode_set)
     end
 
+    def default_switchport_mode_private_vlan_host
+      config_get_default('interface',
+                         'switchport_mode_private_vlan_host')
+    end
+
     def switchport_mode_private_vlan_host_association
       return nil unless Feature.private_vlan_enabled?
       result = config_get('interface',
                           'switchport_mode_private_vlan_host_association',
                           name: @name)
-      result.empty? ? [] : result[0].split(' ')
+      unless result == default_switchport_mode_private_vlan_host_association
+        result = result[0].split(' ')
+      end
+      result
     end
 
     def switchport_mode_private_vlan_host_association=(vlans)
@@ -1018,12 +1057,32 @@ module Cisco
                          'switchport_mode_private_vlan_host_association')
     end
 
+    # This api is used by private vlan to prepare the input to the setter
+    # method. The input can be in the following formats for vlans:
+    # 10-12,14. Prepare_array api is transforming this input into a flat array.
+    # In the example above the returned array will be 10, 11, 12, 13. Prepare
+    # array is first splitting the input on ',' and the than expanding the vlan
+    # range element like 10-12 into a flat array. The final result will
+    # be a  flat array.
+    # This way we can later used the lib utility to check the delta from
+    # the input vlan value and the vlan configured to apply the right config.
     def prepare_array(is_list)
-      is_list.each { |item| item.gsub!('-', '..') }
+      new_list = []
+      is_list.each do |item|
+        if item.include?(',')
+          new_list.push(item.split(','))
+        else
+          new_list.push(item)
+        end
+      end
+      new_list.flatten!
+      new_list.sort!
+      new_list.each { |item| item.gsub!('-', '..') }
       is_list_new = []
-      is_list.each do |elem|
+      new_list.each do |elem|
         if elem.include?('..')
           elema = elem.split('..').map { |d| Integer(d) }
+          elema.sort!
           tr = elema[0]..elema[1]
           tr.to_a.each do |item|
             is_list_new.push(item.to_s)
@@ -1148,7 +1207,10 @@ module Cisco
       result = config_get('interface',
                           'switchport_mode_private_vlan_host_promiscous',
                           name: @name)
-      result.empty? ? [] : result[0].split(' ')
+      unless result == default_switchport_mode_private_vlan_host_promisc
+        result = result[0].split(' ')
+      end
+      result
     end
 
     def switchport_mode_private_vlan_host_promisc=(vlans)
@@ -1166,19 +1228,15 @@ module Cisco
     end
 
     def switchport_mode_private_vlan_trunk_promiscuous
-      return nil unless Feature.private_vlan_enabled?
-      mode = config_get('interface',
-                        'switchport_mode_private_vlan_trunk_promiscuous',
-                        name: @name)
-
-      return mode.nil? ? :disabled : IF_SWITCHPORT_MODE.key(mode)
-
+      config_get('interface',
+                 'switchport_mode_private_vlan_trunk_promiscuous',
+                 name: @name)
     rescue IndexError
       # Assume this is an interface that doesn't support switchport.
       # Do not raise exception since the providers will prefetch this property
       # regardless of interface type.
       # TODO: this should probably be nil instead
-      return :disabled
+      return default_switchport_mode_private_vlan_trunk_promiscuous
     end
 
     def switchport_mode_private_vlan_trunk_promiscuous=(state)
@@ -1187,11 +1245,11 @@ module Cisco
       if state == default_switchport_mode_private_vlan_trunk_promiscuous
         config_set('interface',
                    'switchport_mode_private_vlan_trunk_promiscuous',
-                   name: @name, state: '')
+                   name: @name, state: 'no')
       else
         config_set('interface',
                    'switchport_mode_private_vlan_trunk_promiscuous',
-                   name: @name, state: 'no')
+                   name: @name, state: '')
       end
     end
 
@@ -1201,19 +1259,15 @@ module Cisco
     end
 
     def switchport_mode_private_vlan_trunk_secondary
-      return nil unless Feature.private_vlan_enabled?
-      mode = config_get('interface',
-                        'switchport_mode_private_vlan_trunk_secondary',
-                        name: @name)
-
-      return mode.nil? ? :disabled : IF_SWITCHPORT_MODE.key(mode)
-
+      config_get('interface',
+                 'switchport_mode_private_vlan_trunk_secondary',
+                 name: @name)
     rescue IndexError
       # Assume this is an interface that doesn't support switchport.
       # Do not raise exception since the providers will prefetch this property
       # regardless of interface type.
       # TODO: this should probably be nil instead
-      return :disabled
+      return default_switchport_mode_private_vlan_trunk_secondary
     end
 
     def switchport_mode_private_vlan_trunk_secondary=(state)
@@ -1221,10 +1275,10 @@ module Cisco
       switchport_enable unless switchport
       if state == default_switchport_mode_private_vlan_trunk_secondary
         config_set('interface', 'switchport_mode_private_vlan_trunk_secondary',
-                   name: @name, state: '')
+                   name: @name, state: 'no')
       else
         config_set('interface', 'switchport_mode_private_vlan_trunk_secondary',
-                   name: @name, state: 'no')
+                   name: @name, state: '')
       end
     end
 
@@ -1238,22 +1292,38 @@ module Cisco
       result = config_get('interface',
                           'switchport_private_vlan_trunk_allowed_vlan',
                           name: @name)
-      return [] if result.nil? || result.empty?
-      if result[0].eql? 'none'
-        return []
-      else
-        return result[0].split(',')
+
+      unless result == default_switchport_private_vlan_trunk_allowed_vlan
+        if result[0].eql? 'none'
+          result = default_switchport_private_vlan_trunk_allowed_vlan
+        else
+          result = result[0].split(',')
+        end
       end
+      result
     end
 
     def switchport_private_vlan_trunk_allowed_vlan=(vlans)
       fail TypeError unless vlans.is_a?(Array)
       Feature.private_vlan_enable
       switchport_enable unless switchport
-      vlans = prepare_array(vlans)
-      is_list = prepare_array(switchport_private_vlan_trunk_allowed_vlan)
-      configure_private_vlan_host_property(:allow_vlan, vlans,
-                                           is_list, '')
+      if vlans == default_switchport_private_vlan_trunk_allowed_vlan
+        vlans = prepare_array(switchport_private_vlan_trunk_allowed_vlan)
+        # If there are no vlan presently configured, we can simply return
+        return if vlans == default_switchport_private_vlan_trunk_allowed_vlan
+        configure_private_vlan_host_property(:allow_vlan, [],
+                                             vlans, '')
+      else
+        vlans = prepare_array(vlans)
+        is_list = prepare_array(switchport_private_vlan_trunk_allowed_vlan)
+        configure_private_vlan_host_property(:allow_vlan, vlans,
+                                             is_list, '')
+      end
+    end
+
+    def default_switchport_private_vlan_trunk_allowed_vlan
+      config_get_default('interface',
+                         'switchport_private_vlan_trunk_allowed_vlan')
     end
 
     def switchport_private_vlan_trunk_native_vlan
@@ -1284,12 +1354,9 @@ module Cisco
     end
 
     def switchport_private_vlan_association_trunk
-      return nil unless Feature.private_vlan_enabled?
-      result = config_get('interface',
-                          'switchport_private_vlan_association_trunk',
-                          name: @name)
-      return [] if result.nil? || result.empty?
-      result
+      config_get('interface',
+                 'switchport_private_vlan_association_trunk',
+                 name: @name)
     end
 
     def switchport_private_vlan_association_trunk=(vlans)
@@ -1313,12 +1380,9 @@ module Cisco
     end
 
     def switchport_private_vlan_mapping_trunk
-      return nil unless Feature.private_vlan_enabled?
-      result = config_get('interface',
-                          'switchport_private_vlan_mapping_trunk',
-                          name: @name)
-      return [] if result.nil? || result.empty?
-      result
+      config_get('interface',
+                 'switchport_private_vlan_mapping_trunk',
+                 name: @name)
     end
 
     def switchport_private_vlan_mapping_trunk=(vlans)
@@ -1346,10 +1410,8 @@ module Cisco
       match = config_get('interface',
                          'private_vlan_mapping',
                          name: @name)
-      return [] if match.nil? || match.empty?
-      match[0].delete!(' ')
-      result = match[0].split(',')
-      result
+      match[0].delete!(' ') unless match == default_private_vlan_mapping
+      match
     end
 
     def private_vlan_mapping=(vlans)
